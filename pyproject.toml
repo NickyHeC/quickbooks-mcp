@@ -1,7 +1,7 @@
 [project]
-name = "mcp-template"
+name = "quickbooks-mcp"
 version = "0.1.0"
-description = "A template MCP server for quickly starting a new project"
+description = "MCP server for QuickBooks Online — invoices, customers, vendors, bills, payments, accounts, reports, and more"
 requires-python = ">=3.10"
 dependencies = [
     "dedalus-mcp",

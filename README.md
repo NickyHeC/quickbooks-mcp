@@ -1,358 +1,189 @@
-# mcp-template
+# quickbooks-mcp
 
-A starter template for building MCP (Model Context Protocol) servers with the [dedalus_mcp](https://docs.dedaluslabs.ai/dmcp) framework. Authentication is handled by **DAuth** (Dedalus Auth).
+A [QuickBooks Online](https://quickbooks.intuit.com) MCP server built on the [Dedalus](https://dedaluslabs.ai) platform.
 
-This template supports three auth frameworks — **No Auth**, **API Key**, and **OAuth**. Each has its own `src-*` folder with a complete, ready-to-run server. You can either use the **CLI** to scaffold a new project automatically, or **clone this repo** and rename a folder manually.
+Provides full access to QuickBooks Online accounting data — invoices, customers, vendors, bills, payments, accounts, items, estimates, and financial reports — through 20 MCP tools.
 
----
+## Prerequisites
 
-## What is DAuth?
-
-[DAuth](https://www.dedaluslabs.ai/blog/dedalus-auth-launch) is a multi-tenant authentication layer for MCP servers built by Dedalus Labs. It solves a core problem in the MCP ecosystem: most servers require API keys or tokens, but the MCP spec doesn't define how non-OAuth credentials should be handled securely. Without DAuth, developers either build their own auth infrastructure or pass raw secrets around — both are bad options.
-
-DAuth is **zero-trust** and **host-blind** — Dedalus never sees your raw API keys. Here's how it works:
-
-1. The SDK **encrypts credentials client-side** before they leave your device.
-2. When a request reaches your MCP server, it acts as a standard **OAuth 2.1 Resource Server** — access is verified without touching the credential.
-3. Authenticated requests are forwarded to **the Enclave**, a network-isolated, hardware-secured execution environment written in Rust.
-4. Inside the Enclave, the credential is **decrypted for milliseconds**, used to call the external API, then **zeroed from memory**.
-5. Only the API **response** is returned — the raw secret is never exposed to your server code, to Dedalus, or to the network.
-
-This means your MCP server only holds an opaque connection handle, never a raw key. DAuth is built into the `dedalus_mcp` SDK and works across all auth types (Bearer tokens, API keys, OAuth, etc.).
+- Python 3.10+
+- [`uv`](https://docs.astral.sh/uv/)
+- A QuickBooks developer account with an OAuth2 application
+- A [Dedalus](https://dedaluslabs.ai) account
 
 ---
 
 ## Quick Start
 
-### Option A: CLI (recommended)
+### 1. Create a QuickBooks OAuth Application
 
-Scaffold a new project with one command. The CLI prompts for your project name, auth type, and package manager, then generates a ready-to-run project with dependencies installed.
+1. Go to the [Intuit Developer Portal](https://developer.intuit.com) and sign in.
+2. Navigate to **Dashboard → Create an App** and select **QuickBooks Online and Payments**.
+3. Under **Keys & OAuth**, note your **Client ID** and **Client Secret**.
+4. Add the following **Redirect URI**:
+   ```
+   https://as.dedaluslabs.ai/oauth/callback
+   ```
+5. Note your **Realm ID** (Company ID) — it's shown during the OAuth playground flow or in the URL when viewing your sandbox company.
 
-```bash
-npx create-dmcp
-```
-
-Or pass the project name directly:
-
-```bash
-npx create-dmcp my-mcp-server
-```
-
-Requires Node.js >= 18. The generated project is pure Python.
-
-### Option B: Clone and rename
-
-Clone this repo and rename the `src-*` folder that matches your auth type:
-
-```bash
-git clone https://github.com/NickyHeC/mcp-template.git my-mcp-server
-cd my-mcp-server
-mv src-api-key src
-rm -rf src-no-auth src-oauth
-pip install -e .
-```
-
----
-
-## Project Structure
-
-```
-project-root/
-├── cli/                     # CLI scaffolding tool (npx create-dmcp)
-│   └── index.ts
-├── src-no-auth/             # No Auth — self-contained tools, no credentials
-│   ├── main.py
-│   ├── tools.py
-│   └── client.py
-├── src-api-key/             # API Key — static credential via DAuth
-│   ├── main.py
-│   ├── tools.py
-│   └── client.py
-├── src-oauth/               # OAuth — browser-based auth via DAuth
-│   ├── main.py
-│   ├── tools.py
-│   └── client.py
-├── pyproject.toml           # Python dependencies and build config
-├── package.json             # Node.js config for the CLI
-├── tsconfig.json            # TypeScript config for the CLI
-├── .env.example             # Environment variable reference (per auth type)
-├── PROJECT.md               # Platform research notepad (for you / your AI agent)
-├── LICENSE
-└── README.md
-```
-
-Each `src-*` folder is a complete, self-contained server. If using the **CLI**, it copies the right template into `<project>/src/` automatically. If **cloning manually**, rename the folder you want:
-
-```bash
-mv src-api-key src           # rename your chosen template to src/
-```
-
-The server code expects to live in a folder called `src/` — all internal imports use `from src.tools import ...` and `from src.main import ...`. After renaming (or CLI scaffolding), the server is ready to configure and run.
-
----
-
-## Choose Your Auth Framework
-
-Pick the framework that matches your target platform's authentication method.
-
-| Framework | When to use | Folder |
-|-----------|-------------|--------|
-| **No Auth** | Tools that don't call external APIs — calculators, formatters, local utilities | `src-no-auth/` |
-| **API Key** | Platforms that use static credentials — API keys, personal access tokens, bot tokens (e.g. GitHub, Slack, Discord) | `src-api-key/` |
-| **OAuth** | Platforms that require browser-based user authorization — OAuth 2.0 flows (e.g. Gmail, Linear, Spotify, Google Calendar) | `src-oauth/` |
-
-### No Auth
-
-Use when your tools are self-contained and don't need to call any external API.
-
-- No `Connection` object needed
-- No DAuth configuration
-- No environment variables beyond basic server settings
-- Tools are simple decorated functions
-
-```python
-from dedalus_mcp import MCPServer, tool
-
-@tool(description="Add two numbers")
-def add(a: float, b: float) -> float:
-    return a + b
-
-server = MCPServer("my-mcp")
-server.collect(add)
-```
-
-**To use:** `mv src-no-auth src`
-
-### API Key
-
-Use when the platform authenticates with a static credential that the user provides once (API key, personal access token, bot token, etc.).
-
-- `Connection` + `SecretKeys` declares the credential name
-- DAuth encrypts and manages the credential in its enclave
-- Tools can use `ctx.dispatch()` for authenticated requests, or call APIs directly
-- Environment variables: `DEDALUS_AS_URL`, your platform's token
-
-```python
-from dedalus_mcp.auth import Connection, SecretKeys
-
-platform_connection = Connection(
-    name="github",
-    secrets=SecretKeys(token="GITHUB_TOKEN"),
-    base_url="https://api.github.com",
-    auth_header_format="token {api_key}",
-)
-```
-
-**To use:** `mv src-api-key src`
-
-### OAuth
-
-Use when the platform requires a browser-based OAuth flow where users authorize your application to act on their behalf.
-
-- `Connection` + `SecretKeys` declares the token name (same as API Key from code perspective)
-- The Dedalus platform handles the full OAuth token exchange externally
-- OAuth configuration (client ID, client secret, authorize/token URLs, scopes) is set via environment variables
-- **Important:** OAuth environment variables must be baked into the server when deploying to ensure the connection works
-- Tools use `ctx.dispatch()` for authenticated requests through the DAuth enclave
-
-```python
-from dedalus_mcp.auth import Connection, SecretKeys
-
-platform_connection = Connection(
-    name="linear-mcp",
-    secrets=SecretKeys(token="LINEAR_ACCESS_TOKEN"),
-    base_url="https://api.linear.app",
-    auth_header_format="Bearer {api_key}",
-)
-```
-
-> **Note on OAuth with DAuth:** Your Python server code looks nearly identical to the API Key template. The difference is that the Dedalus platform reads the `OAUTH_*` environment variables to orchestrate the browser-based OAuth flow and token refresh. Your server code never manages OAuth tokens directly — it just calls `ctx.dispatch()` and DAuth applies the token inside the enclave.
-
-**To use:** `mv src-oauth src`
-
----
-
-## How to Build an MCP Server from This Template
-
-> If you used the CLI (`npx create-dmcp`), steps 2 is already done — the CLI chose the template, renamed it to `src/`, and installed dependencies. You still need to fill in `.env` (step 3) and configure the server (step 4).
-
-### 1. Research the Target Platform API
-
-Read the API docs for the platform you want to integrate. Note:
-
-- Available endpoints and features
-- Authentication method (Bearer token, API key, OAuth, etc.)
-- Rate limits and restrictions
-- Response formats
-
-Save your notes in `PROJECT.md` — it serves as context for you and for AI coding agents in later steps. The file is pre-formatted with sections for all the information you'll need.
-
-**Tip:** Once your `PROJECT.md` is filled in, you can hand the project off to an AI coding agent with a prompt like: *"Build my MCP server based on this template and the notes in PROJECT.md."* The agent can read the template files, your research notes, and this README to implement the full server with minimal back-and-forth.
-
-### 2. Choose an Auth Framework and Rename the Folder
-
-*Skip this step if you used the CLI — it already did this for you.*
-
-Based on your research, pick the right auth framework from the table above. Rename the chosen folder to `src/` and remove the others:
-
-```bash
-# Example: using the OAuth template
-mv src-oauth src
-rm -rf src-no-auth src-api-key
-```
-
-### 3. Set Up Environment Variables
-
-*Skip `cp` if you used the CLI — `.env.example` is already in your project.*
+### 2. Configure Environment Variables
 
 ```bash
 cp .env.example .env
 ```
 
-Fill in only the variables for your chosen auth framework. See `.env.example` for which variables belong to which framework.
+Fill in your `.env`:
 
-- **No Auth:** No environment variables needed.
-- **API Key:** Set `DEDALUS_AS_URL` and your platform's token (e.g. `GITHUB_TOKEN`).
-- **OAuth:** Set `DEDALUS_AS_URL`, `DEDALUS_API_KEY`, and all `OAUTH_*` variables. These must also be configured in the deployment environment.
+```env
+# Dedalus Platform
+DEDALUS_AS_URL=https://as.dedaluslabs.ai
+DEDALUS_API_KEY=<your-dedalus-api-key>
+DEDALUS_API_URL=https://api.dedaluslabs.ai
 
-### 4. Configure the Server (`src/main.py`)
+# QuickBooks
+QBO_ACCESS_TOKEN=
+QBO_REALM_ID=<your-company-realm-id>
+QBO_ENVIRONMENT=sandbox
 
-Customize `main.py` with your platform's details:
-
-1. **Connection name** — Change `"platform"` to your platform's identifier (e.g. `"github"`, `"linear"`, `"spotify"`).
-2. **Secret key** — Update `SecretKeys(token="...")` to match your credential name. The API Key template uses `"API_TOKEN"`; the OAuth template uses `"ACCESS_TOKEN"`. Rename to match your platform (e.g. `"GITHUB_TOKEN"`, `"LINEAR_ACCESS_TOKEN"`).
-3. **Base URL** — Set to the platform's API root (e.g. `"https://api.github.com"`).
-4. **Auth header format** — Set how the credential is attached. Common formats: `"Bearer {api_key}"`, `"token {api_key}"`, `"Bot {api_key}"`.
-5. **Server name** — Change `"my-mcp"` to something descriptive (e.g. `"github-mcp"`). The CLI does this automatically.
-
-### 5. Implement Tools (`src/tools.py`)
-
-Define the tools your server will expose:
-
-1. **Result models** — Create Pydantic `BaseModel` subclasses for structured return values.
-2. **Request helper** — For API Key and OAuth templates, use the `api_request()` helper (which wraps `ctx.dispatch()`) to make authenticated calls through DAuth.
-3. **Tool functions** — Decorate functions with `@tool(description="...")`. Use type hints for parameters and return a Pydantic model.
-4. **Tool registry** — Add every tool to the `tools` list at the bottom of the file.
-
-The template files include example tools demonstrating each pattern.
-
-### 6. Test Locally
-
-Install dependencies:
-
-```bash
-pip install -e .
+# QuickBooks OAuth (consumed by the Dedalus platform during deployment)
+OAUTH_ENABLED=true
+OAUTH_AUTHORIZE_URL=https://appcenter.intuit.com/connect/oauth2
+OAUTH_TOKEN_URL=https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer
+OAUTH_CLIENT_ID=<your-qbo-client-id>
+OAUTH_CLIENT_SECRET=<your-qbo-client-secret>
+OAUTH_SCOPES_AVAILABLE=com.intuit.quickbooks.accounting,com.intuit.quickbooks.payment
+OAUTH_BASE_URL=https://quickbooks.api.intuit.com
 ```
 
-**Test your connection first** (API Key and OAuth only). Before starting the server, verify that your `Connection` config and credentials actually work:
+### 3. Deploy to Dedalus
+
+1. Log in to the [Dedalus Dashboard](https://dedaluslabs.ai).
+2. Go to **Add Server** and connect this GitHub repository.
+3. In the server configuration, enter the environment variables from your `.env` (`OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `QBO_REALM_ID`, etc.).
+4. Deploy. The dashboard will show your server slug (e.g. `your-org/quickbooks-mcp`).
+
+### 4. Install Dependencies
 
 ```bash
-python -m src.client --test-connection
+uv sync
 ```
 
-This uses `ConnectionTester` from `dedalus_mcp.testing` to make a real API call to your target platform — no running server needed. Edit the test path in `client.py` to match a lightweight endpoint from your platform (e.g. `/user` for GitHub, `/v1/me` for Spotify). If it prints `OK`, your connection is good.
-
-> **OAuth note:** For local testing you need a valid access token in `.env`. Obtain one from the platform's OAuth playground or developer console. When deployed on Dedalus, DAuth handles the full OAuth flow automatically.
-
-**Then start the server and test tools:**
+### 5. Run Locally
 
 ```bash
-python -m src.main
+uv run src/main.py
 ```
 
-The server starts on port 8080. Use the client to verify your tools:
-
-```bash
-python -m src.client
-```
-
-Update `src/client.py` to call your tools by name with the correct arguments.
-
-### 7. Document Your Project
-
-Update this README with:
-
-- What your server does
-- Available tools and their parameters
-- Configuration and environment variables
-- Usage examples
-
-### 8. Clean Up Template Scaffolding
-
-Once your server is built and working, remove leftover template files so the repo only contains your project code. If you're using an AI coding agent, ask it to perform this cleanup as a final step.
-
-**Files to remove:**
-- `PROJECT.md` — your research notes; no longer needed in the final repo
-- Any remaining `src-*` folders (e.g. `src-no-auth/`, `src-api-key/`, `src-oauth/`) that weren't chosen
-- `cli/`, `package.json`, `tsconfig.json` — CLI scaffolding tools, not part of your server
-- `.env.example` — once your `.env` is set up (optional, some teams keep this for onboarding)
-
-**Files to clean up:**
-- `src/tools.py` — remove `ExampleResult` and `example_tool`; only your real tools should remain
-- `src/client.py` — update to call your actual tools with real arguments, or remove if not needed
-- `src/main.py` — remove the placeholder inline comments (e.g. `# A short identifier for this connection...`) once the values are filled in
-- `README.md` — replace the template guide with project-specific documentation (see step 7)
-- `pyproject.toml` — update the project `name` and `description` to match your server
-
-### 9. Deploy to Dedalus Labs
-
-Upload your server to [dedaluslabs.ai](https://dedaluslabs.ai). DAuth handles credential security automatically in production.
-
-**Important for OAuth servers:** Make sure all `OAUTH_*` environment variables are configured in the deployment environment. These variables are consumed by the Dedalus platform to handle the OAuth flow — they must be baked into the server at deploy time.
+The server starts on port 8080.
 
 ---
 
-## Making Authenticated API Calls with `ctx.dispatch()`
+## Environment Variables
 
-For API Key and OAuth servers, use `ctx.dispatch()` to make authenticated requests through DAuth. The framework applies the credential inside the enclave so your code never touches raw secrets.
+### QuickBooks OAuth (server-side, set during Dedalus deployment)
 
-```python
-from dedalus_mcp import tool, get_context, HttpMethod, HttpRequest
-from src.main import platform_connection
+| Variable | Description |
+| --- | --- |
+| `OAUTH_ENABLED` | `true` |
+| `OAUTH_AUTHORIZE_URL` | `https://appcenter.intuit.com/connect/oauth2` |
+| `OAUTH_TOKEN_URL` | `https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer` |
+| `OAUTH_CLIENT_ID` | Your QuickBooks OAuth app client ID |
+| `OAUTH_CLIENT_SECRET` | Your QuickBooks OAuth app client secret |
+| `OAUTH_SCOPES_AVAILABLE` | `com.intuit.quickbooks.accounting,com.intuit.quickbooks.payment` |
+| `OAUTH_BASE_URL` | `https://quickbooks.api.intuit.com` |
 
-@tool(description="Fetch user profile")
-async def get_profile() -> dict:
-    ctx = get_context()
-    req = HttpRequest(method=HttpMethod.GET, path="/user/profile")
-    resp = await ctx.dispatch(platform_connection, req)
-    if resp.success and resp.response is not None:
-        return {"success": True, "data": resp.response.body}
-    error = resp.error.message if resp.error else "Request failed"
-    return {"success": False, "error": error}
+### QuickBooks Configuration
+
+| Variable | Description |
+| --- | --- |
+| `QBO_ACCESS_TOKEN` | OAuth access token (managed by DAuth in production) |
+| `QBO_REALM_ID` | Company ID — required in every API URL |
+| `QBO_ENVIRONMENT` | `sandbox` or `production` (default: `production`) |
+
+### Dedalus Platform
+
+| Variable | Description |
+| --- | --- |
+| `DEDALUS_API_KEY` | Your Dedalus API key (`dsk-*`) |
+| `DEDALUS_API_URL` | API base URL (default: `https://api.dedaluslabs.ai`) |
+| `DEDALUS_AS_URL` | Authorization server URL (default: `https://as.dedaluslabs.ai`) |
+
+---
+
+## Available Tools
+
+| Tool | R/W | Description |
+| --- | --- | --- |
+| `query_entities` | R | SQL-like query for any entity (`SELECT * FROM Customer WHERE ...`) |
+| `get_company_info` | R | Company name, address, fiscal year, and settings |
+| `get_customer` | R | Get a customer by ID |
+| `create_customer` | W | Create a new customer (DisplayName required) |
+| `update_customer` | W | Update a customer (requires ID and SyncToken) |
+| `get_invoice` | R | Get an invoice by ID |
+| `create_invoice` | W | Create an invoice (CustomerRef and Line items required) |
+| `send_invoice` | W | Email an invoice to the customer |
+| `get_vendor` | R | Get a vendor by ID |
+| `create_vendor` | W | Create a new vendor (DisplayName required) |
+| `get_bill` | R | Get a bill by ID |
+| `create_bill` | W | Create a bill (VendorRef and Line items required) |
+| `get_payment` | R | Get a payment by ID |
+| `create_payment` | W | Record a customer payment (CustomerRef and TotalAmt required) |
+| `get_account` | R | Get a chart-of-accounts entry by ID |
+| `get_item` | R | Get a product/service item by ID |
+| `get_estimate` | R | Get an estimate (quote) by ID |
+| `create_estimate` | W | Create an estimate (CustomerRef and Line items required) |
+| `get_report` | R | Run a financial report (ProfitAndLoss, BalanceSheet, etc.) |
+| `cdc` | R | Change Data Capture — entities changed since a timestamp |
+
+---
+
+## Architecture
+
+QuickBooks Online exposes a RESTful JSON API where every request is scoped to a
+company via its `realmId`. All requests are pinned to `minorversion=75`.
+
+```
+src/
+├── config.py    # DAuth Connection + shared constants (realm ID, base URL)
+├── main.py      # MCPServer setup and entry point
+├── tools.py     # All 20 MCP tools + request helper
+└── client.py    # Test client (connection test + tool test)
 ```
 
-The `path` is appended to the `base_url` configured in your `Connection` object. DAuth attaches the credential to the request using the `auth_header_format` you specified.
+---
+
+## Troubleshooting
+
+### "Invalid redirect_uri parameter"
+
+QuickBooks rejected the OAuth callback URL. Add `https://as.dedaluslabs.ai/oauth/callback`
+to your app's **Redirect URIs** in the [Intuit Developer Portal](https://developer.intuit.com).
+
+### SyncToken errors on updates
+
+All update operations require the current `SyncToken` from the entity. Fetch the
+entity first with the corresponding `get_*` tool, then pass the `SyncToken` value
+to the update tool. Stale SyncTokens return a 400 error.
+
+### Rate limiting (HTTP 429)
+
+QuickBooks allows 500 requests/minute per company. Report endpoints have a tighter
+limit of 200 requests/minute. The server uses exponential backoff with jitter on
+429 responses.
+
+### Access token expired
+
+Access tokens expire after 60 minutes. In production, DAuth handles token refresh
+automatically. For local testing, obtain a fresh token from the
+[Intuit OAuth Playground](https://developer.intuit.com/app/developer/playground).
 
 ---
 
-## Environment Variables Reference
+## Notes
 
-| Variable | Auth Framework | Description |
-|----------|----------------|-------------|
-| `DEDALUS_AS_URL` | API Key, OAuth | Dedalus authorization server URL (default: `https://as.dedaluslabs.ai`) |
-| `DEDALUS_API_KEY` | API Key, OAuth | Your Dedalus platform API key |
-| `DEDALUS_API_URL` | API Key, OAuth | Dedalus API URL (default: `https://api.dedaluslabs.ai`) |
-| `API_TOKEN` | API Key | The platform credential (rename to match your platform, e.g. `GITHUB_TOKEN`) |
-| `OAUTH_ENABLED` | OAuth | Set to `true` to enable OAuth flow |
-| `OAUTH_AUTHORIZE_URL` | OAuth | Platform's OAuth authorization endpoint |
-| `OAUTH_TOKEN_URL` | OAuth | Platform's OAuth token exchange endpoint |
-| `OAUTH_CLIENT_ID` | OAuth | Your OAuth app's client ID |
-| `OAUTH_CLIENT_SECRET` | OAuth | Your OAuth app's client secret |
-| `OAUTH_SCOPES_AVAILABLE` | OAuth | Comma-separated list of OAuth scopes |
-| `OAUTH_BASE_URL` | OAuth | Platform's API base URL for OAuth requests |
-
-See `.env.example` for a copy-paste-ready version with sections marked by framework.
-
----
-
-## Requirements
-
-- **Python >= 3.10** — for the MCP server
-- **Node.js >= 18** — only needed if using the CLI (`npx create-dmcp`)
-- **uv** (recommended) or **pip** — for Python dependency management
-
-## Links
-
-- [Dedalus MCP docs](https://docs.dedaluslabs.ai/dmcp)
-- [DAuth launch blog post](https://www.dedaluslabs.ai/blog/dedalus-auth-launch)
-- [Dashboard & deployment](https://dedaluslabs.ai/dashboard)
+- Uses the QBO SQL-like query language (`SELECT * FROM Invoice WHERE TotalAmt > 1000`).
+- All API requests are pinned to `minorversion=75` (versions 1–74 were deprecated August 2025).
+- Supports both sandbox and production environments via the `QBO_ENVIRONMENT` variable.
+- Report responses are capped at 400,000 cells — large reports may be silently truncated.
+- Pagination uses `STARTPOSITION` and `MAXRESULTS` (max 1000 per page, not cursor-based).
+- Authentication uses OAuth 2.0 via DAuth. Direct API keys are not supported by QuickBooks.
