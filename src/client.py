@@ -24,7 +24,8 @@ async def test_connection() -> None:
     from src.config import qbo_connection
 
     tester = ConnectionTester.from_env(qbo_connection)
-    response = await tester.request(TestRequest(path="/companyinfo/{realmId}"))
+    from src.config import realm_id
+    response = await tester.request(TestRequest(path=f"/companyinfo/{realm_id}"))
 
     if response.success:
         print(f"OK {response.status} — Connection works!")
